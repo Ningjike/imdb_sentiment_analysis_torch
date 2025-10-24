@@ -13,5 +13,6 @@
 |BERT-native|0.90112|
 |DistilBERT-native|0.90772|
 |DistilBERT-trainer|0.92860|
+|BERT-scratch|0.93516|
 |BERT-trainer|0.93848|
 |RoBERTa-trainer|0.95232|
