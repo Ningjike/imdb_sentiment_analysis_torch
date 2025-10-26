@@ -3,16 +3,91 @@
 # 各模型评估结果
 |模型|准确率|
 |---|---|
-|LSTM|0.50000|
-|Transformer|0.56360|
-|CNN|0.75880|
+|Transformer|0.55360|
+|CNN|0.72060|
+|CNN-LSTM|0.77996|
 |Attention-LSTM|0.80700|
-|CNN-LSTM|0.83476|
-|GRU|0.83844|
-|Capsule-LSTM|0.88408|
+|Capsule-LSTM|0.84324|
+|GRU|0.85724|
+|LSTM|0.87824|
+
+|预训练模型|准确率|
+|---|---|
 |BERT-native|0.90112|
 |DistilBERT-native|0.90772|
 |DistilBERT-trainer|0.92860|
 |BERT-scratch|0.93516|
 |BERT-trainer|0.93848|
 |RoBERTa-trainer|0.95232|
+
+
+# DeBERTa xxlarge PEFT
+## 模型准确率
+|模型|准确率|
+|---|---|
+|LoRA-int8|0.93752|
+|Prompt|0.56360|
+|Ptuning-int8|0.92268|
+## fine tuning
+1. LoRA
+```
+lora_config = LoraConfig(
+    # 低秩矩阵的秩
+    r=16,
+    # 缩放因子
+    lora_alpha=32,
+    target_modules=['query_proj', 'value_proj'],
+    lora_dropout=0.05,
+    bias="none",
+    # 任务类型为文本分类任务
+    task_type=TaskType.SEQ_CLS
+)
+```
+该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间9h
+解决方案：
+- 采用8bit量化
+- 限制max_length=128
+- 训练num_train_epochs=2
+2. Prompt
+```
+
+```
+3. Ptuning
+```
+# Define PromptEncoder Config
+peft_config = PromptEncoderConfig(
+    num_virtual_tokens=20,
+    encoder_hidden_size=128,
+    task_type=TaskType.SEQ_CLS
+)
+```
+该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间9h
+解决方案：
+- 采用8bit量化
+- 限制max_length=128
+- 训练num_train_epochs=2
+
+4. Prefix
+```
+# Define Prefix Config
+peft_config = PrefixTuningConfig(
+    num_virtual_tokens=20,
+    task_type=TaskType.SEQ_CLS
+)
+```
+问题：
+- ValueError: Prefix tuning does not work with gradient checkpointing.
+
+  尝试手动关闭gradient checkpointing
+  ```
+  model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
+  ```
+  
+- ValueError: Model does not support past key values which are required for prefix tuning.
+
+  说明模型不支持​​ past key values​​，而这是前缀调整的必要条件，因此Prefix Tuning 无法用于 DeBERTa-v2。
+
+add adaptor
+```
+model = get_peft_model(model, xxxx_config)
+```
