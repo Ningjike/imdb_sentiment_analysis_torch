@@ -1,5 +1,5 @@
 # imdb_sentiment_analysis_torch
-本项目基于kaggle竞赛“Bag of Words Meets Bags of Popcorn”,[(竞赛链接)](https://www.kaggle.com/competitions/word2vec-nlp-tutorial/overview),进行nlp学习，实现电影评论文本的情感二分类任务。分别采用了cnn、transformer、gru等常见的神经网络模型，同时还尝试了Bert、distilBert、Roberta等大模型结合竞赛任务数据进行微调。
+本项目基于kaggle竞赛“Bag of Words Meets Bags of Popcorn”,[(竞赛链接)](https://www.kaggle.com/competitions/word2vec-nlp-tutorial/overview),进行nlp学习，实现电影评论文本的情感二分类任务。分别采用了cnn、transformer、gru等常见的神经网络模型，同时还尝试了Bert、distilBert、Roberta等大模型结合竞赛任务数据进行微调。同时利用deberta xxlarge模型进行情感分析，尝试了几种常见微调方式。
 # 神经网络模型
 ## 各模型评估结果
 |模型|准确率|
@@ -11,6 +11,7 @@
 |Capsule-LSTM|0.84324|
 |GRU|0.85724|
 |LSTM|0.87824|
+
 使用 Gensim 加载 GloVe，需要将 GloVe 格式的词向量文件转换为 Gensim 兼容的 Word2Vec 文本格式，见glove-gensim.py
 
 # 预训练模型
@@ -22,6 +23,7 @@
 |BERT-scratch|0.93516|
 |BERT-trainer|0.93848|
 |RoBERTa-trainer|0.95232|
+
 kaggle有时网络连接不稳定，加载模型可能会出现HTTPStatusError，故部分代码从本地导入模型
 
 # DeBERTa xxlarge PEFT
