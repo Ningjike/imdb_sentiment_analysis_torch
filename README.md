@@ -31,10 +31,11 @@ kaggle有时网络连接不稳定，加载模型可能会出现HTTPStatusError�
 |模型|准确率|
 |---|---|
 |LoRA-int8|0.93752|
-|Prompt|0.56360|
 |Ptuning-int8|0.92268|
+|Prompt|0.75600|
+
 ## fine tuning
-1. LoRA
+1. LoRA： 5h 24m 29s · GPU T4 x2
 ```
 lora_config = LoraConfig(
     # 低秩矩阵的秩
@@ -49,15 +50,13 @@ lora_config = LoraConfig(
 )
 ```
 该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间9h
+
 解决方案：
 - 采用8bit量化
 - 限制max_length=128
 - 训练num_train_epochs=2
-2. Prompt
-```
 
-```
-3. Ptuning
+2. Ptuning： 5h 37m 7s · GPU T4 x2
 ```
 # Define PromptEncoder Config
 peft_config = PromptEncoderConfig(
@@ -67,11 +66,30 @@ peft_config = PromptEncoderConfig(
 )
 ```
 该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间9h
+
 解决方案：
 - 采用8bit量化
 - 限制max_length=128
 - 训练num_train_epochs=2
+  
+3. Prompt：6h 25m 9s · GPU P100
+```
+prompt_tuning_init_text = "Classify if the movie review is positive or negative.\n"
+peft_config = PromptTuningConfig(
+    num_virtual_tokens=10,
+    task_type=TaskType.SEQ_CLS,
+    prompt_tuning_init = PromptTuningInit.TEXT,
+    prompt_tuning_init_text=prompt_tuning_init_text,
+    tokenizer_name_or_path = model_id
+)
+```
+问题： 
+采用8bit量化出现RuntimeError: cublasLt ran into an error!故后来采用4bit量化，但模型训练3轮后准确率仅有0.57，几乎没有学到分类特征。
 
+最终解决方案为：
+- 限制max_length=128
+- 限制per_device_train_batch_size=1
+- 限制per_device_eval_batch_size=1
 4. Prefix
 ```
 # Define Prefix Config
