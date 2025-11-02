@@ -114,3 +114,118 @@ add adaptor
 ```
 model = get_peft_model(model, xxxx_config)
 ```
+------
+# 模型准确率
+|models|准确率|
+|---|---|
+|DeBERTa-V2-unsloth|0.95844|
+|ModernBERT-unsloth|0.95540|
+|BERT-RDrop|0.93792|
+|BERT-SCL-LoRA|0.92984|
+|BERT-RDrop-LoRA|0.92516|
+|BERT-SCL|0.91744|
+
+## unsloth 使用
+imdb_deberta_unsloth：5h 41m 47s · GPU T4 x2
+imdb_modernbert_unsloth： 2h 57m 4s · GPU T4 x2
+采用unsloth调用DeBERTa-V2-xxlarge模型：未采用8bit和4bit量化，且max_length设置为256，最终用时仍然在6h内完成了3轮训练，相比之前采用LoRA微调时不仅采用了量化，还进一步减少了max_length，仅完成了2轮训练，性能有所改进。
+
+1. kaggle 安装 unsloth
+```
+!pip install pip3-autoremove
+!pip install torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu128
+!pip install unsloth
+!pip install transformers==4.56.2
+!pip install --no-deps trl==0.22.2
+```
+2. 利用FastModel加载模型
+```
+model, tokenizer = FastModel.from_pretrained(
+    model_name=model_name,
+    # 默认开启4bit量化
+    load_in_4bit=False,
+    max_seq_length=512,
+    dtype=None,
+    auto_model=AutoModelForSequenceClassification,
+    num_labels=NUM_CLASSES,
+    gpu_memory_utilization=0.5  # Reduce if out of memory
+)
+```
+3. LoRA微调配置
+```
+model = FastModel.get_peft_model(
+    model,
+    r=16,  # The larger, the higher the accuracy, but might overfit
+    lora_alpha=32,  # Recommended alpha == r at least
+    lora_dropout=0.05,
+    bias="none",
+    random_state=3407,
+    use_rslora=False,  # We support rank stabilized LoRA
+    loftq_config=None,  # And LoftQ
+    use_gradient_checkpointing="unsloth",  # Reduces memory usage
+    target_modules = "all-linear", # Optional now! Can specify a list if needed
+    task_type="SEQ_CLS",
+)
+```
+## R-Drop
+参考[论文](https://arxiv.org/abs/2106.14448)
+
+<img width="944" height="438" alt="image" src="https://github.com/user-attachments/assets/24da268f-0d33-4f3d-a665-6aa01a2edf93" />
+
+R-Drop能够降低基于dropout模型在训练与推理阶段之间的一致性差异。具体来讲，对于每个输入均进行两次前向传播，分别采用两个随机Dropout子模型进行预测，采用KL散度来衡量差异程度，同时结合交叉熵损失构建总损失函数。
+<img width="1175" height="379" alt="image" src="https://github.com/user-attachments/assets/4aaf1c5f-4d56-4467-9914-18600db1d868" />
+
+继承Huggingface的BertPreTrainedModel重写forward方法：
+```
+class BertScratch(BertPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+        self.config = config
+        self.bert = BertModel(config)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+
+        self.post_init()
+
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):
+        outputs = self.bert(input_ids, attention_mask, token_type_ids)
+        pooled_output = outputs[1]
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        total_loss = None
+        
+        if labels is not None:
+            kl_outputs = self.bert(input_ids, attention_mask, token_type_ids)
+            kl_output = kl_outputs[1]
+            kl_output = self.dropout(kl_output)
+            kl_logits = self.classifier(kl_output)
+            # 计算第一次前向的交叉熵损失Lnll1
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            # 计算第二次前向的交叉熵损失Lnll2
+            ce_loss = loss_fct(kl_logits.view(-1, self.num_labels), labels.view(-1))
+            # 计算Lkl
+            kl_loss = (KL(logits, kl_logits, "sum") + KL(kl_logits, logits, "sum")) / 2.
+            # 总损失=Lnll + Lkl
+            total_loss = loss + ce_loss + kl_loss
+
+        return SequenceClassifierOutput(
+            loss=total_loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions
+        )
+```
+## Supervised Constrative Learning
+参考[论文](https://arxiv.org/abs/2004.11362)
+<img width="717" height="668" alt="image" src="https://github.com/user-attachments/assets/c3a02223-028f-4816-9474-bc89e9f7037d" />
+
+<img width="1037" height="128" alt="image" src="https://github.com/user-attachments/assets/828de657-3cc1-4fee-9851-14c73fda524d" />
+
+
+
