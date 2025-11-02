@@ -115,6 +115,7 @@ add adaptor
 model = get_peft_model(model, xxxx_config)
 ```
 ------
+尝试使用unsloth改进微调效率，对R-Drop、Supervised Contrastive Learning方法进行实践。
 # 模型准确率
 |models|准确率|
 |---|---|
@@ -127,10 +128,13 @@ model = get_peft_model(model, xxxx_config)
 
 ## unsloth 使用
 imdb_deberta_unsloth：5h 41m 47s · GPU T4 x2
+
 imdb_modernbert_unsloth： 2h 57m 4s · GPU T4 x2
+
 采用unsloth调用DeBERTa-V2-xxlarge模型：未采用8bit和4bit量化，且max_length设置为256，最终用时仍然在6h内完成了3轮训练，相比之前采用LoRA微调时不仅采用了量化，还进一步减少了max_length，仅完成了2轮训练，性能有所改进。
 
 1. kaggle 安装 unsloth
+   若出现ImportError: Unsloth: Please install unsloth_zoo via `pip install unsloth_zoo`可尝试
 ```
 !pip install pip3-autoremove
 !pip install torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu128
@@ -170,12 +174,12 @@ model = FastModel.get_peft_model(
 ## R-Drop
 参考[论文](https://arxiv.org/abs/2106.14448)
 
-<img width="944" height="438" alt="image" src="https://github.com/user-attachments/assets/24da268f-0d33-4f3d-a665-6aa01a2edf93" />
+<img width="900" height="400" alt="image" src="https://github.com/user-attachments/assets/24da268f-0d33-4f3d-a665-6aa01a2edf93" />
 
 R-Drop能够降低基于dropout模型在训练与推理阶段之间的一致性差异。具体来讲，对于每个输入均进行两次前向传播，分别采用两个随机Dropout子模型进行预测，采用KL散度来衡量差异程度，同时结合交叉熵损失构建总损失函数。
-<img width="1175" height="379" alt="image" src="https://github.com/user-attachments/assets/4aaf1c5f-4d56-4467-9914-18600db1d868" />
+<img width="800" height="250" alt="image" src="https://github.com/user-attachments/assets/4aaf1c5f-4d56-4467-9914-18600db1d868" />
 
-继承Huggingface的BertPreTrainedModel重写forward方法：
+### 继承Huggingface的BertPreTrainedModel重写forward方法：
 ```
 class BertScratch(BertPreTrainedModel):
     def __init__(self, config):
@@ -223,9 +227,189 @@ class BertScratch(BertPreTrainedModel):
 ```
 ## Supervised Constrative Learning
 参考[论文](https://arxiv.org/abs/2004.11362)
-<img width="717" height="668" alt="image" src="https://github.com/user-attachments/assets/c3a02223-028f-4816-9474-bc89e9f7037d" />
 
-<img width="1037" height="128" alt="image" src="https://github.com/user-attachments/assets/828de657-3cc1-4fee-9851-14c73fda524d" />
+- 监督对比特点：
+    每个锚点：多个正样本对、多个负样本对
+    正样本来自于与锚点相同类别的样本
+  
+<img width="500" height="400" alt="image" src="https://github.com/user-attachments/assets/c3a02223-028f-4816-9474-bc89e9f7037d" />
+
+<img width="800" height="90" alt="image" src="https://github.com/user-attachments/assets/828de657-3cc1-4fee-9851-14c73fda524d" />
+
+### 损失函数设计
+```
+class SupConLoss(nn.Module):
+    def __init__(self, temperature=0.07, contrast_mode='all',
+                 base_temperature=0.07):
+        super(SupConLoss, self).__init__()
+        self.temperature = temperature
+        self.contrast_mode = contrast_mode
+        self.base_temperature = base_temperature
+
+    def forward(self, features, labels=None, mask=None):
+        device = (torch.device('cuda')
+                  if features.is_cuda
+                  else torch.device('cpu'))
+
+        features = features.view(features.shape[0], features.shape[1], -1)
+
+        batch_size = features.shape[0]
+        if labels is not None and mask is not None:
+            raise ValueError('Cannot define both `labels` and `mask`')
+        elif labels is None and mask is None:
+            mask = torch.eye(batch_size, dtype=torch.float32).to(device)
+        elif labels is not None:
+            # 此时为有监督学习
+            labels = labels.contiguous().view(-1, 1)
+            if labels.shape[0] != batch_size:
+                raise ValueError('Num of labels does not match num of features')
+            # 构建正样本掩码，属于同一类的为正样本
+            mask = torch.eq(labels, labels.T).float().to(device)
+        else:
+            mask = mask.float().to(device)
+
+        contrast_count = features.shape[1]
+        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
+        # 锚点的选择
+        if self.contrast_mode == 'one':
+            anchor_feature = features[:, 0]
+            anchor_count = 1
+        elif self.contrast_mode == 'all':
+            anchor_feature = contrast_feature
+            anchor_count = contrast_count
+        else:
+            raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
+
+        # compute logits
+        # 计算锚点样本与负样本的余弦相似度
+        anchor_dot_contrast = torch.div(
+            torch.matmul(anchor_feature, contrast_feature.T),
+            self.temperature)
+        # for numerical stability
+        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
+        logits = anchor_dot_contrast - logits_max.detach()
+
+        # tile mask
+        mask = mask.repeat(anchor_count, contrast_count)
+        # mask-out self-contrast cases
+        logits_mask = torch.scatter(
+            torch.ones_like(mask),
+            1,
+            torch.arange(batch_size * anchor_count).view(-1, 1).to(device),
+            0
+        )
+        mask = mask * logits_mask
+
+        # compute log_prob
+        exp_logits = torch.exp(logits) * logits_mask
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+
+        # compute mean of log-likelihood over positive
+        mean_log_prob_pos = (mask * log_prob).sum(1) / mask.sum(1)
+
+        # loss，计算最终loss
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        loss = loss.view(anchor_count, batch_size).mean()
+
+        return loss
+```
+### 继承Huggingface的BertPreTrainedModel重写forward方法：
+```
+class BertScratch(BertPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+        self.config = config
+        self.alpha = 0.2
+
+        self.bert = BertModel(config)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+
+        self.post_init()
+
+    def forward(self, input_ids=None, attention_mask=None, token_type_ids=None, labels=None):
+        outputs = self.bert(input_ids, attention_mask, token_type_ids)
+
+        pooled_output = outputs[1]
+
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        loss = None
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            ce_loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+
+            scl_fct = SupConLoss()
+            scl_loss = scl_fct(pooled_output, labels)
+
+            loss = ce_loss + self.alpha * scl_loss
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions
+        )
+
+```
+# LoRA微调
+原尝试使用unsloth调用重写后的模型，结果出现多次形如下方的报错：
+
+AttributeError: 'BertWithRDrop' object has no attribute 'xxxxx'
+
+自定义模型不太兼容unsloth，尝试修改自定义模型，最终未能成功。
+考虑到进行微调的BERT模型相比DeBERTa-V2-xxlarge，规模相对较小，训练时长可以接受，故直接采用PEFT进行LoRA微调。
+- imdb_bert_drop_lora: 1h 57m 14s · GPU T4 x2
+```
+config = AutoConfig.from_pretrained(model_name)
+config.num_labels = NUM_CLASSES
+
+model = BertWithRDrop(config)
+
+pretrained_bert = AutoModel.from_pretrained(model_name)
+model.bert = pretrained_bert
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 
+peft_config = LoraConfig(
+    task_type=TaskType.SEQ_CLS,
+    inference_mode=False,
+    r=8,
+    lora_alpha=16,
+    lora_dropout=0.1,
+    target_modules=["query", "key", "value", "dense"],  # BERT 的注意力层
+)
 
+model = get_peft_model(model, peft_config)
+model.print_trainable_parameters()
+```
+
+- imdb_bert_scl_lora: 1h 26m 37s · GPU T4 x2
+```
+config = AutoConfig.from_pretrained(model_name)
+config.num_labels = NUM_CLASSES
+
+model = BertWithSCL(config, alpha=0.2)
+
+pretrained_bert = AutoModel.from_pretrained(model_name)
+model.bert = pretrained_bert
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+peft_config = LoraConfig(
+    task_type=TaskType.SEQ_CLS,
+    inference_mode=False,
+    r=8,
+    lora_alpha=16,
+    lora_dropout=0.1,
+    target_modules=["query", "key", "value", "dense"],  # BERT 的注意力层
+)
+
+model = get_peft_model(model, peft_config)
+```
