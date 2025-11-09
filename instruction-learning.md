@@ -6,13 +6,20 @@
 |Phi-4-mini|0.52672|
 |Qwen3|0.54636|
 - deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B：4h 26m 50s · GPU T4 x2
+  
   2B params
 - google/gemma-2-2b-it：6h 41m 38s · GPU T4 x2
+  
   3B params
 - microsoft/Phi-4-mini-instruct：10h 10m 17s · GPU T4 x2
+  
   4B params
 - Qwen/Qwen3-1.7B：4h 27m 28s · GPU T4 x2
+  
   3B params
+
+由于测试集较大，[25000 rows x 2 columns]，当采用较大模型逐条分析时会出现超出内存的情况，故采用较小模型，也因此，模型效果不好，接近于随机猜测。
+
 ## prompt
 ```
 prompt_style = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request. Before answering, think carefully about the question and create a step-by-step chain of thoughts to ensure a logical and accurate response.
