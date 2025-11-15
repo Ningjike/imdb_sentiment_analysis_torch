@@ -472,4 +472,8 @@ for i, response in enumerate(tqdm(responses, desc="analysis", total=total_sample
     pred = int(digits[-1]) if digits else 0
     test_pred.append(pred)
 ```
-
+---
+# 指令微调
+|模型|准确率|
+|---|---|
+|Qwen3-4bit| 0.92964|
