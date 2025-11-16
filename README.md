@@ -49,7 +49,7 @@ lora_config = LoraConfig(
     task_type=TaskType.SEQ_CLS
 )
 ```
-该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间9h
+该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间
 
 解决方案：
 - 采用8bit量化
@@ -65,7 +65,7 @@ peft_config = PromptEncoderConfig(
     task_type=TaskType.SEQ_CLS
 )
 ```
-该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间9h
+该部分出现OutOfMemoryError、且训练时间需要10几个小时超出kaggle最长支持运行时间
 
 解决方案：
 - 采用8bit量化
@@ -474,6 +474,42 @@ for i, response in enumerate(tqdm(responses, desc="analysis", total=total_sample
 ```
 ---
 # 指令微调
+在指令学习的基础上，利用训练集对模型进行训练使其更符合特定任务。
+## 指令设计：
+### 训练指令
+```
+alpaca_prompt = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request. Before answering, think carefully about the question and create a step-by-step chain of thoughts to ensure a logical and accurate response.
+
+### Instruction: 
+You are an expert of film comment analysis. Analyze the given text from an online review and determine the sentiment polarity. Respond with 'positive' or 'negative'.   
+
+### Question: 
+{} 
+
+### Response: 
+{}
+"""
+```
+在训练时分别将评论、情感标签添加入指令中
+### 推理指令
+```
+prompt_style = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request. Before answering, think carefully about the question and create a step-by-step chain of thoughts to ensure a logical and accurate response.
+
+### Instruction: 
+You are an expert of film comment analysis. Analyze the given text from an online review and determine the sentiment polarity. Respond with 'positive' or 'negative'.   
+
+### Question: 
+{} 
+
+### Response: 
+"""
+```
+在推理时，让模型根据指令中的评论生成情感标签。
+## 模型训练
+本模块尝试了3种模型：Qwen、Deepseek、Gemma，最终完成了模型Qwen，其他模型均超出kaggle最大允许运行时间。
+Wandb中训练损失曲线：
+<img width="5056" height="2656" alt="W B Chart 2025_11_16 13_12_40" src="https://github.com/user-attachments/assets/3f2c40cb-f56b-4cfd-ac29-874f4a31e3ae" />
+### Qwen3-0.6bit:7h 17m 35s · GPU T4 x2
 |模型|准确率|
 |---|---|
-|Qwen3-4bit| 0.92964|
+|Qwen3-0.6bit| 0.92964|
