@@ -61,6 +61,7 @@ Let's think step by step:
 
 ## 模型结果
 <img width="700" height="99" alt="image" src="https://github.com/user-attachments/assets/685aecff-702a-4b20-ba1b-e7c7245f9f6b" />
+
 模型效果不好的原因：
 1. 可能是由于只训练了 1 个 epoch ,由于 kaggle 最大时长 12h 的限制, 只进行了 1 个 epoch 的 训练，模型还没学习到 sentence 和 label 的映射关系
 2. 可能是由于 teacher 模型和 student 模型架构不同
