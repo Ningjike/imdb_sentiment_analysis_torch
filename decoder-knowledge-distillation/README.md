@@ -1,8 +1,8 @@
 # Decoder Knowledge Distillation
-通过对微调后的 Qwen-4B（Teacher）蒸馏迁移 Qwen3-0.6B（Student），对 IMDB 数据集进行情感分析二分类，达到了约为 94.31%的准确率。
-
+1. 通过对微调后的 Qwen-4B（Teacher）蒸馏迁移 Qwen3-0.6B（Student），对 IMDB 数据集进行情感分析二分类，达到了约为 94.31%的准确率。
+2. 通过对微调后的 Deepseek（Teacher）蒸馏迁移 Qwen3-4B（Student），对 SST-2 数据集进行情感分析二分类，达到了约为 53.4%的准确率。
+   
 ## 知识蒸馏原理
-
 使用教师模型在相同输入下生成的 logits 作为“软标签”，并通过反向KL散度来衡量学生模型输出分布 logits 与教师模型输出分布 teacher_logits 之间的差异。
 ```
 class KDTrainer(SFTTrainer):
@@ -43,131 +43,26 @@ class KDTrainer(SFTTrainer):
         return (loss_total, outputs_student) if return_outputs else loss_total
 ```
 
-## deepseek \<think>过程蒸馏
-利用deepseek进行指令学习，得到训练数据的推理过程记录，但由于训练数据过多（25000条），该过程运行时长远超 7h，最终未能实现
+## \<think> 蒸馏过程 7h 59m 19s · GPU T4 x2
+指令格式：
 ```
-import torch
-import pandas as pd
-from tqdm import tqdm
-from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-import os
+alpaca_prompt = """You are an expert film critic. Analyze the following review step by step and explain why its sentiment is "{label}".
 
+Review: {input}
 
-MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-DATA_PATH = "/kaggle/input/corpus-imdb/labeledTrainData.tsv"
-OUTPUT_PATH = "imdb_deepseek_cot_fast.csv"
-
-BATCH_SIZE = 4
-MAX_NEW_TOKENS = 256
-NUM_SAMPLES = None
-
-
-# 构造 prompt
-def build_prompt(review: str, true_label: str) -> str:
-    return f"""You are an expert film critic. Given the following movie review and its correct sentiment label, 
-                generate a clear, step-by-step reasoning that explains why the sentiment is "{true_label}".
-                
-                Review: {review}
-                
-                Correct Sentiment: {true_label}
-                
-                <think>
-                Let's analyze step by step:
-                1. Identify key emotional words or phrases.
-                2. Consider tone, context, and possible sarcasm.
-                3. Explain how these lead to the conclusion of "{true_label}".
-                </think>
-                
-                Now, provide your reasoning inside  <think>  and  </think>  tags only.
-                """
-
-# 提取 reasoning
-def extract_reasoning(text: str) -> str:
-    # 移除开头可能存在的 </think>
-    if text.strip().startswith("</think>"):
-        text = text[len("</think>") :].lstrip()
-    
-    start_tag = "<think>"
-    end_tag = "</think>"
-    start_idx = text.find(start_tag)
-    end_idx = text.find(end_tag, start_idx + len(start_tag) if start_idx != -1 else 0)
-
-    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-        return text[start_idx + len(start_tag) : end_idx].strip()
-    else:
-        return text.strip()
-
-def main():
-    df = pd.read_csv(DATA_PATH, delimiter="\t", quoting=3)
-    if NUM_SAMPLES is not None:
-        df = df.head(NUM_SAMPLES)
-
-    # 构建 prompts
-    prompts = []
-    sentiments = []
-    for _, row in df.iterrows():
-        label = "positive" if row["sentiment"] == 1 else "negative"
-        prompts.append(build_prompt(row["review"], label))
-        sentiments.append(row["sentiment"])
-
-    # 加载 tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"
-
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,
-    )
-
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        quantization_config=quantization_config,
-        torch_dtype=torch.float16,
-        device_map="auto",
-        trust_remote_code=True,
-        use_cache=True,
-    )
-
-    generator = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        trust_remote_code=True,
-        pad_token_id=tokenizer.pad_token_id,
-        eos_token_id=tokenizer.eos_token_id,
-        return_full_text=False,
-    )
-
-    results = []
-
-    # 批量生成
-    raw_outputs = generator(
-        prompts,
-        batch_size=BATCH_SIZE,
-        max_new_tokens=MAX_NEW_TOKENS,
-        do_sample=False,
-    )
-
-    flat_outputs = [out[0] if isinstance(out, list) else out for out in raw_outputs]
-
-    # 后处理
-    for i, out in enumerate(flat_outputs):
-        reasoning = extract_reasoning(out["generated_text"])
-        results.append({
-            "review": df.iloc[i]["review"],
-            "reasoning": reasoning,
-            "sentiment": sentiments[i]
-        })
-
-    # 保存结果
-    final_df = pd.DataFrame(results)
-    final_df.to_csv(OUTPUT_PATH, index=False)
-
-if __name__ == "__main__":
-    main()
+<think>
+Let's think step by step:
+1. Look for emotionally charged words.
+2. Assess the overall tone.
+3. Justify why the sentiment is "{label}".
+</think>"""
 ```
+让teacher 模型、student 模型根据已知的训练数据的文本和标签进行推理，学习到推理能力
+
+## 模型结果
+<img width="700" height="99" alt="image" src="https://github.com/user-attachments/assets/685aecff-702a-4b20-ba1b-e7c7245f9f6b" />
+模型效果不好的原因：
+1. 可能是由于只训练了 1 个 epoch ,由于 kaggle 最大时长 12h 的限制, 只进行了 1 个 epoch 的 训练，模型还没学习到 sentence 和 label 的映射关系
+2. 可能是由于 teacher 模型和 student 模型架构不同
+3. 可能是由于指令格式设置不合理。
 
